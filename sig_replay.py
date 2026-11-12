@@ -14,8 +14,10 @@ Usage:
   sig_replay.py SIGNATURE.png                       # pick the pad corners, then draw
   sig_replay.py SIGNATURE.png --preview             # look at the trace first, then draw
   sig_replay.py SIGNATURE.png --box 400,500,900,650 # reuse corners from a previous run
+  sig_replay.py SIGNATURE.png --gif demo.gif        # write an animation of the strokes, no drawing
 
-Writes nothing to disk except a temporary preview image, deleted again in the same run.
+Writes nothing to disk except a temporary preview image, deleted again in the same run
+(and the --gif file, when asked for).
 
 Abort mid-draw by grabbing the mouse and moving it: any deviation from where the
 script put the cursor releases the button and stops.
@@ -226,6 +228,59 @@ def render_preview(mask, strokes, out, scale=3):
     bg.save(out)
 
 
+def write_gif(mask, strokes, out, width=720, seconds=4.0, fps=25, hold=1.5):
+    """Animate the replay: strokes appear in drawing order over a faint copy of the image."""
+    h, w = mask.shape
+    ss = 2  # draw at 2x, downsample each frame for anti-aliasing
+    pad = 24
+    k = (width - 2 * pad) / w
+    W, H = width, int(h * k) + 2 * pad
+    ghost = Image.fromarray(np.where(mask, 232, 255).astype(np.uint8)).convert("RGB")
+    ghost = ghost.resize((int(w * k), int(h * k)), Image.LANCZOS)
+    base = Image.new("RGB", (W, H), "white")
+    base.paste(ghost, (pad, pad))
+    base = base.resize((W * ss, H * ss), Image.LANCZOS)
+
+    def tf(p):
+        return ((pad + p[0] * k) * ss, (pad + p[1] * k) * ss)
+
+    segs = []  # (stroke index, a, b, length)
+    for i, s in enumerate(strokes):
+        pts = [tf(p) for p in s] if len(s) > 1 else [tf(s[0]), tf((s[0][0] + 0.5, s[0][1] + 0.5))]
+        for a, b in zip(pts, pts[1:]):
+            segs.append((a, b, max(math.dist(a, b), 0.01)))
+    total = sum(sg[2] for sg in segs)
+    n = int(seconds * fps)
+    ink, tip, lw = (18, 32, 110), (220, 60, 60), 3 * ss
+
+    canvas = base.copy()
+    d = ImageDraw.Draw(canvas)
+    frames, done, j = [], 0.0, 0
+    for f in range(1, n + 1):
+        target = total * f / n
+        pen = None
+        while j < len(segs) and done + segs[j][2] <= target:
+            a, b, L = segs[j]
+            d.line([a, b], fill=ink, width=lw)
+            d.ellipse((b[0] - lw / 2, b[1] - lw / 2, b[0] + lw / 2, b[1] + lw / 2), fill=ink)
+            done += L
+            pen = b
+            j += 1
+        frame = canvas.copy()
+        if j < len(segs):  # partial segment + pen tip
+            a, b, L = segs[j]
+            t = (target - done) / L
+            pen = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+            ImageDraw.Draw(frame).line([a, pen], fill=ink, width=lw)
+        if pen and f < n:
+            r = 5 * ss
+            ImageDraw.Draw(frame).ellipse((pen[0] - r, pen[1] - r, pen[0] + r, pen[1] + r), fill=tip)
+        frames.append(frame.resize((W, H), Image.LANCZOS).quantize(colors=64, dither=Image.NONE))
+    durations = [int(1000 / fps)] * (len(frames) - 1) + [int(hold * 1000)]
+    frames[0].save(out, save_all=True, append_images=frames[1:], duration=durations, loop=0,
+                   optimize=True, disposal=1)
+
+
 def _hsv(h, s, v):
     import colorsys
     return colorsys.hsv_to_rgb(h, s, v)
@@ -407,6 +462,8 @@ def main():
     ap.add_argument("image")
     ap.add_argument("--preview", action="store_true",
                     help="show the traced strokes first and ask before drawing (nothing is kept on disk)")
+    ap.add_argument("--gif", metavar="OUT.gif",
+                    help="write an animation of the strokes being drawn and exit (no mouse control)")
     ap.add_argument("--box", help="x1,y1,x2,y2 screen points of the signature area (skips picking)")
     ap.add_argument("--speed", type=float, default=600, help="pen speed in screen points/s (default 600)")
     ap.add_argument("--margin", type=float, default=0.08, help="padding inside the box, fraction (default 0.08)")
@@ -418,6 +475,11 @@ def main():
     mask, strokes = build_strokes(args.image, args.threshold)
     n_pts = sum(len(s) for s in strokes)
     print(f"Traced {len(strokes)} strokes, {n_pts} points, image {mask.shape[1]}x{mask.shape[0]} px")
+
+    if args.gif:
+        write_gif(mask, strokes, args.gif)
+        print(f"Animation written to {args.gif}")
+        return
 
     if args.preview:
         show_preview(mask, strokes)

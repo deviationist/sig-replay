@@ -13,3 +13,7 @@
 
 __pycache__/
 .DS_Store
+
+# Exceptions: the fake test signature and the README animation made from it.
+!examples/john-doe.png
+!docs/demo.gif

@@ -3,6 +3,8 @@
 Draws a stored signature on an online signature pad by tracing the image into pen
 strokes and replaying them as a real mouse drag.
 
+![The test signature being traced and replayed stroke by stroke](docs/demo.gif)
+
 - **Platform:** drawing is macOS only (it posts mouse events through Quartz). Tracing and
   `--preview` work anywhere Python runs.
 - **Requirements:** [uv](https://docs.astral.sh/uv/). The script declares its own
@@ -37,7 +39,19 @@ blocks it. Use a Mac you administer.
 **When you're done signing, switch it off again.** While it's on, anything run from
 that terminal can control your mouse and keyboard.
 
-## 2. Get the signature as an image (once)
+## 2. Try it with the test signature
+
+`examples/john-doe.png` is a made-up signature for practising. Open a free browser
+paint app such as [Kleki](https://kleki.com/), pick a thin pen, and run:
+
+```bash
+./sig_replay.py examples/john-doe.png --preview
+```
+
+then follow the steps in section 4. No account or sign-up needed, and nothing you draw
+there goes anywhere.
+
+## 3. Get your own signature as an image (once)
 
 For a signature saved in Preview (Tools → Annotate → Signatures):
 
@@ -52,7 +66,7 @@ For a signature saved in Preview (Tools → Annotate → Signatures):
 PNG or JPG both work, with or without a transparent background. This image is the only
 file the tool needs, and it never writes anything next to it.
 
-## 3. Sign
+## 4. Sign
 
 1. Open the page with the signature field.
 2. Run:
@@ -75,11 +89,21 @@ It prints `--box x1,y1,x2,y2`; pass that to skip steps 4–5 if you need to redo
 | Option | Default | |
 |---|---|---|
 | `--preview` | off | show the trace and ask before drawing |
+| `--gif FILE` | | write an animation of the strokes being drawn and exit |
 | `--speed` | 600 | pen speed in points/s; lower it (e.g. 300) if curves come out jagged |
 | `--margin` | 0.08 | padding inside the field, as a fraction |
 | `--lift-ms` | 60 | pause between strokes |
 | `--wait` | 5 | countdown before drawing, seconds |
 | `--threshold` | Otsu | ink threshold 0–255 for opaque images |
 
-Try it once on a scratch canvas (a Paint app, or a public signature-pad demo) before the
-real document.
+Try it on a scratch canvas first (section 2) before the real document.
+
+To make an animation like the one above from any signature (writes a file, no mouse control):
+
+```bash
+./sig_replay.py examples/john-doe.png --gif demo.gif
+```
+
+The test signature is the text "John Doe" set in
+[Great Vibes](https://github.com/googlefonts/great-vibes) (SIL Open Font License) with a
+drawn underline.
