@@ -406,7 +406,31 @@ def pick_box(mouse):
     return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
 
 
-def draw(strokes, size, box, speed, margin, lift_ms):
+def width_speed_fn(mask, slow, fast):
+    """Map ink thickness to pen speed: thick ink -> slow, thin -> fast.
+
+    Velocity-based signature pads (e.g. signature_pad, used by many e-sign sites) draw
+    thinner lines the faster the pointer moves, so this reproduces the original's
+    thick/thin variation."""
+    from scipy.ndimage import distance_transform_edt, maximum_filter
+
+    thick = maximum_filter(distance_transform_edt(mask), size=5)  # local half-width of the ink
+    vals = thick[mask]
+    lo, hi = np.percentile(vals, 10), np.percentile(vals, 95)
+    if hi - lo < 0.5:  # uniform line: nothing to vary
+        return lambda p: math.sqrt(slow * fast)
+    ls, lf = math.log(slow), math.log(fast)
+    H, W = thick.shape
+
+    def fn(p):
+        x = min(max(int(round(p[0])), 0), W - 1)
+        y = min(max(int(round(p[1])), 0), H - 1)
+        r = min(max((thick[y, x] - lo) / (hi - lo), 0.0), 1.0)
+        return math.exp(lf + r * (ls - lf))
+    return fn
+
+
+def draw(strokes, size, box, speed_fn, margin, lift_ms):
     w, h = size
     bx1, by1, bx2, by2 = box
     bw, bh = (bx2 - bx1) * (1 - 2 * margin), (by2 - by1) * (1 - 2 * margin)
@@ -418,36 +442,61 @@ def draw(strokes, size, box, speed, margin, lift_ms):
         return ox + p[0] * k, oy + p[1] * k
 
     mouse = Mouse()
-    dt = 0.004
-    step = max(speed * dt, 0.5)
+    dt = 0.004   # target interval between drag events
+    tau = 0.05   # speed changes ease in over ~50 ms, like a hand would
+
+    def trace_stroke(img_pts):
+        """Drag along the stroke, moving by real elapsed time so the speed is accurate."""
+        scr = [tf(p) for p in img_pts]
+        seg = [math.dist(a, b) for a, b in zip(scr, scr[1:])]
+        total = sum(seg)
+        i, base, pos = 0, 0.0, 0.0  # segment index, arc length at its start, arc position
+        cur = speed_fn(img_pts[0])
+        last = time.monotonic()
+        while pos < total:
+            time.sleep(dt)
+            now = time.monotonic()
+            el, last = now - last, now
+            while i < len(seg) - 1 and base + seg[i] < pos:
+                base += seg[i]
+                i += 1
+            t = (pos - base) / seg[i] if seg[i] else 0.0
+            a, b = img_pts[i], img_pts[i + 1]
+            target = speed_fn((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+            cur += (target - cur) * min(1.0, el / tau)
+            pos = min(total, pos + cur * el)
+            while i < len(seg) - 1 and base + seg[i] < pos:
+                base += seg[i]
+                i += 1
+            t = (pos - base) / seg[i] if seg[i] else 1.0
+            a, b = scr[i], scr[i + 1]
+            mouse.check_hijack()
+            mouse.drag(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+        return scr[-1]
+
     pen = None  # screen position where the pen is down, or None
     try:
         for s in strokes:
-            pts = [tf(p) for p in s]
-            if pen is None or math.dist(pen, pts[0]) > 1.5:
+            start = tf(s[0])
+            if pen is None or math.dist(pen, start) > 1.5:
                 if pen is not None:
                     mouse.up(*pen)
                     time.sleep(lift_ms / 1000)
-                if not mouse.move_and_verify(*pts[0]):
+                if not mouse.move_and_verify(*start):
                     if pen is None:  # very first move: the pointer never budged
                         open_accessibility_settings()
                         sys.exit("\n" + no_permission_msg(
                             "The pointer didn't move when the script moved it, so macOS is "
                             "dropping its mouse events."))
                     raise KeyboardInterrupt("mouse moved by user")
-                mouse.press(*pts[0])
+                mouse.press(*start)
                 time.sleep(0.03)
-            if len(pts) == 1:  # a dot
-                mouse.drag(pts[0][0] + 0.6, pts[0][1] + 0.6)
+            if len(s) == 1:  # a dot
+                mouse.drag(start[0] + 0.6, start[1] + 0.6)
                 time.sleep(0.02)
-            for a, b in zip(pts, pts[1:]):
-                n = max(1, int(math.dist(a, b) / step))
-                for i in range(1, n + 1):
-                    t = i / n
-                    mouse.check_hijack()
-                    mouse.drag(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-                    time.sleep(dt)
-            pen = pts[-1]
+                pen = start
+            else:
+                pen = trace_stroke(s)
         if pen is not None:
             mouse.up(*pen)
     except KeyboardInterrupt as e:
@@ -465,7 +514,10 @@ def main():
     ap.add_argument("--gif", metavar="OUT.gif",
                     help="write an animation of the strokes being drawn and exit (no mouse control)")
     ap.add_argument("--box", help="x1,y1,x2,y2 screen points of the signature area (skips picking)")
-    ap.add_argument("--speed", type=float, default=600, help="pen speed in screen points/s (default 600)")
+    ap.add_argument("--speed", type=float,
+                    help="constant pen speed in points/s; turns off thickness-based speed")
+    ap.add_argument("--speed-range", default="120,1500", metavar="SLOW,FAST",
+                    help="points/s used for the thickest and thinnest ink (default 120,1500)")
     ap.add_argument("--margin", type=float, default=0.08, help="padding inside the box, fraction (default 0.08)")
     ap.add_argument("--lift-ms", type=float, default=60, help="pause between strokes (default 60)")
     ap.add_argument("--wait", type=int, default=5, help="countdown before drawing, seconds (default 5)")
@@ -499,7 +551,12 @@ def main():
                  "didn't move between them. Run again and move the mouse before each Enter.")
     print(f"Box: --box {','.join(f'{v:.0f}' for v in box)}")
     countdown("Click the target window's title bar now to focus it (not the pad). Drawing in", args.wait)
-    draw(strokes, (mask.shape[1], mask.shape[0]), box, args.speed, args.margin, args.lift_ms)
+    if args.speed:
+        speed_fn = lambda p: args.speed  # noqa: E731
+    else:
+        slow, fast = (float(v) for v in args.speed_range.split(","))
+        speed_fn = width_speed_fn(mask, slow, fast)
+    draw(strokes, (mask.shape[1], mask.shape[0]), box, speed_fn, args.margin, args.lift_ms)
     print("Done.")
 
 

@@ -90,7 +90,8 @@ It prints `--box x1,y1,x2,y2`; pass that to skip steps 4–5 if you need to redo
 |---|---|---|
 | `--preview` | off | show the trace and ask before drawing |
 | `--gif FILE` | | write an animation of the strokes being drawn and exit |
-| `--speed` | 600 | pen speed in points/s; lower it (e.g. 300) if curves come out jagged |
+| `--speed-range` | 120,1500 | points/s for the thickest and thinnest ink: thick parts are drawn slowly, thin parts fast. Velocity-based pads (most e-sign sites: fast = thinner line) then reproduce the original's thick/thin strokes |
+| `--speed` | off | constant speed in points/s instead (e.g. 300), for pads with a fixed line width |
 | `--margin` | 0.08 | padding inside the field, as a fraction |
 | `--lift-ms` | 60 | pause between strokes |
 | `--wait` | 5 | countdown before drawing, seconds |
