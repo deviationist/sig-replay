@@ -4,7 +4,7 @@ Draws a stored signature on an online signature pad by tracing the image into pe
 strokes and replaying them as a real mouse drag.
 
 <div align="center">
-  <img src="assets/demo-c0aa5b.svg" alt="sig-replay drawing the made-up John Doe test signature: the traced strokes appear one by one in the order the mouse draws them, from the sweeping J to the long tail off the final e, then the finished signature holds and fades before the loop restarts">
+  <img src="assets/demo-4e93bd.svg" alt="sig-replay drawing the made-up John Doe test signature: the traced strokes appear one by one in the order the mouse draws them, from the sweeping J to the long tail off the final e. The pen slows where the original ink is thick and speeds up where it is thin, and the line comes out thicker where it moves slowly and thinner where it moves fast, as on a velocity-based signature pad. The finished signature holds and fades before the loop restarts">
 </div>
 
 - **Platform:** drawing is macOS only (it posts mouse events through Quartz). Tracing,
@@ -141,8 +141,10 @@ The README images are generated from the test signature:
 tools/generate-readme-svg.sh   # → assets/demo-<hash>.svg, assets/trace-<hash>.png + README refs
 ```
 
-- `demo-*.svg` (`--svg`): an SVG with CSS keyframes, where each traced stroke draws
-  itself in order via an animated stroke dash. GitHub renders an SVG in `<img>` with
+- `demo-*.svg` (`--svg`): the replay as if the SVG were a velocity-based signature pad.
+  The pen moves at the speeds the mouse would use (slow on thick ink, fast on thin), and
+  the line width follows that speed like such pads draw it. Each stroke is cut into short
+  pieces, each with its own width and CSS keyframes on its stroke dash. GitHub renders an SVG in `<img>` with
   scripting off but declarative animation on, so it plays in the README.
   `prefers-reduced-motion` shows the finished signature, and the black ink on a white card
   reads the same in GitHub's light and dark themes.

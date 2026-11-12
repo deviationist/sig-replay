@@ -296,28 +296,42 @@ def _font(size):
         return ImageFont.load_default()
 
 
-def _bezier_path(pts, sx, sy):
-    """Smooth path through the points (Catmull-Rom converted to cubic Bezier)."""
-    P = [(x * sx, y * sy) for x, y in pts]
-    if len(P) == 1:
-        x, y = P[0]
-        return f"M{x:.1f} {y:.1f}l0.1 0.1"
-    d = [f"M{P[0][0]:.1f} {P[0][1]:.1f}"]
-    for i in range(len(P) - 1):
-        p0, p1, p2 = P[max(i - 1, 0)], P[i], P[i + 1]
-        p3 = P[min(i + 2, len(P) - 1)]
-        c1 = (p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6)
-        c2 = (p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6)
-        d.append(f"C{c1[0]:.1f} {c1[1]:.1f} {c2[0]:.1f} {c2[1]:.1f} {p2[0]:.1f} {p2[1]:.1f}")
-    return "".join(d)
+def stroke_timeline(stroke, k, speed_fn, tau=0.05, step=3.0):
+    """Simulate the pen along one stroke like draw() does: speed follows ink thickness and
+    eases over ~tau seconds. Returns [(seconds, fraction of the stroke drawn)]."""
+    pts = [(x * k, y * k) for x, y in stroke]
+    seg = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
+    total = sum(seg)
+    if total == 0:
+        return [(0.0, 0.0), (0.03, 1.0)]
+    out, t, pos, cur = [(0.0, 0.0)], 0.0, 0.0, speed_fn(stroke[0])
+    i, base = 0, 0.0
+    while pos < total:
+        while i < len(seg) - 1 and base + seg[i] < pos:
+            base += seg[i]
+            i += 1
+        f = (pos - base) / seg[i] if seg[i] else 0.0
+        a, b = stroke[i], stroke[i + 1]
+        target = speed_fn((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+        dt = min(step, total - pos) / cur
+        cur += (target - cur) * min(1.0, dt / tau)
+        pos = min(total, pos + cur * dt)
+        t += dt
+        out.append((t, pos / total))
+    return out
 
 
-def write_svg(mask, strokes, out, width=720, speed=500.0, lift=0.12, hold=2.0, fade=0.4,
-              label="A signature being drawn stroke by stroke"):
-    """Animated SVG of the replay: each stroke draws itself in order (CSS keyframes on
-    stroke-dashoffset), holds, fades and loops. Works inside a GitHub README <img>:
-    scripting is off there, declarative animation isn't. prefers-reduced-motion shows the
-    finished signature. Black ink on a white card reads the same in light and dark mode."""
+def write_svg(mask, strokes, out, width=720, speed_range=(80.0, 1000.0), lift=0.12, hold=2.0,
+              fade=0.4, label="A signature being drawn stroke by stroke"):
+    """Animated SVG of the replay, as if the SVG were a velocity-based signature pad.
+
+    The pen moves at the speeds the mouse would use (slow where the source ink is thick,
+    fast where it's thin), and the line width follows that speed the way such pads draw
+    it (signature_pad-style: width = max_w / (2 * velocity + 1), velocity smoothed). Each
+    stroke is cut into short pieces, each with its own width and its own CSS keyframes on
+    stroke-dashoffset, so pieces appear in order at the simulated pen's pace. Holds, fades
+    and loops. Plays inside a GitHub README <img> (declarative animation, no script);
+    prefers-reduced-motion shows the finished signature."""
     from xml.sax.saxutils import escape
 
     h, w = mask.shape
@@ -325,30 +339,62 @@ def write_svg(mask, strokes, out, width=720, speed=500.0, lift=0.12, hold=2.0, f
     k = (width - 2 * pad) / w
     W, H = width, round(h * k + 2 * pad)
     ink_w = max(1.6, (mask.sum() / max(np.count_nonzero(skeletonize(mask)), 1)) * k * 0.8)
+    max_w, min_w = ink_w * 1.5, ink_w * 0.45  # pad pen: thick when slow, thin when fast
+    speed_fn = width_speed_fn(mask, *speed_range)
 
-    lens = [sum(math.dist(a, b) for a, b in zip(s, s[1:])) * k for s in strokes]
-    draw_t = [max(L / speed, 0.03) for L in lens]
-    total = sum(draw_t) + lift * (len(strokes) - 1) + hold + fade
+    def at(stroke, frac, cum):
+        """Point at a fraction of the stroke's length (cum = cumulative lengths)."""
+        L = frac * cum[-1]
+        j = max(0, min(len(cum) - 2, int(np.searchsorted(cum, L, side="right")) - 1))
+        seg = cum[j + 1] - cum[j]
+        f = (L - cum[j]) / seg if seg else 0.0
+        (x0, y0), (x1, y1) = stroke[j], stroke[j + 1]
+        return ((x0 + (x1 - x0) * f) * k + pad, (y0 + (y1 - y0) * f) * k + pad)
+
+    pieces = []  # (start s, end s, width, svg path)
+    t = 0.0
+    for s in strokes:
+        if len(s) == 1:
+            x, y = s[0][0] * k + pad, s[0][1] * k + pad
+            pieces.append((t, t + 0.03, max_w * 0.8, f"M{x:.1f} {y:.1f}l0.1 0.1"))
+            t += 0.03 + lift
+            continue
+        cum = np.concatenate([[0.0], np.cumsum([math.dist(a, b) for a, b in zip(s, s[1:])])])
+        tl = stroke_timeline(s, k, speed_fn)
+        total_len = cum[-1] * k
+        v, lw = 0.0, (max_w + min_w) / 2  # pad state at pen-down
+        chunk = [tl[0]]
+        for prev, cur in zip(tl, tl[1:]):
+            dt = max(cur[0] - prev[0], 1e-4)
+            v = 0.7 * ((cur[1] - prev[1]) * total_len / (dt * 1000)) + 0.3 * v  # px/ms, smoothed
+            chunk.append(cur)
+            if (cur[1] - chunk[0][1]) * total_len >= 5 or cur is tl[-1]:
+                lw += (max(max_w / (2 * v + 1), min_w) - lw) * 0.6
+                pts = [at(s, f, cum) for _, f in chunk]
+                d = "M" + "L".join(f"{x:.1f} {y:.1f}" for x, y in pts)
+                pieces.append((t + chunk[0][0], t + cur[0], lw, d))
+                chunk = [cur]
+        t += tl[-1][0] + lift
+    total = t - lift + hold + fade
     T = total * 1000
 
-    def pct(t):
-        return f"{t / total * 100:.3f}%"
+    def pct(x):
+        return f"{x / total * 100:.3f}%"
 
-    css, paths, t = [], [], 0.0
-    for i, (s, dt) in enumerate(zip(strokes, draw_t)):
-        d = _bezier_path([(x + pad / k, y + pad / k) for x, y in s], k, k)
-        css.append(f"#s{i}{{animation:d{i} {T:.0f}ms linear infinite}}"
-                   f"@keyframes d{i}{{0%,{pct(t)}{{stroke-dashoffset:1}}{pct(t + dt)},100%{{stroke-dashoffset:0}}}}")
-        paths.append(f'<path id="s{i}" pathLength="1" d="{d}"/>')
-        t += dt + lift
+    css, paths = [], []
+    for i, (t0, t1, lw, d) in enumerate(pieces):
+        css.append(f"#p{i}{{stroke-width:{lw:.2f}px;animation:k{i} {T:.0f}ms linear infinite}}"
+                   f"@keyframes k{i}{{0%,{pct(max(t0 - 0.001, 0))}{{stroke-dashoffset:1.01;opacity:0}}"
+                   f"{pct(t0)}{{stroke-dashoffset:1.01;opacity:1}}{pct(t1)},100%{{stroke-dashoffset:0;opacity:1}}}}")
+        paths.append(f'<path id="p{i}" pathLength="1" d="{d}"/>')
     t_end = total - fade
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="{escape(label)}">
   <style>
-    path{{fill:none;stroke:#000;stroke-width:{ink_w:.2f};stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1 1;stroke-dashoffset:1}}
+    path{{fill:none;stroke:#000;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1 2;stroke-dashoffset:1.01;opacity:0}}
     g{{animation:f {T:.0f}ms linear infinite}}
     @keyframes f{{0%,{pct(t_end)}{{opacity:1}}100%{{opacity:0}}}}
-    {"".join(css)}
-    @media (prefers-reduced-motion:reduce){{g,path{{animation:none!important}}path{{stroke-dashoffset:0}}}}
+    {chr(10).join("    " + c for c in css).strip()}
+    @media (prefers-reduced-motion:reduce){{g,path{{animation:none!important}}path{{stroke-dashoffset:0;opacity:1}}}}
   </style>
   <rect width="{W}" height="{H}" rx="8" fill="#fff"/>
   <g>
