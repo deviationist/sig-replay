@@ -96,7 +96,8 @@ It prints `--box x1,y1,x2,y2`; pass that to skip steps 4–5 if you need to redo
 |---|---|---|
 | `--preview` | off | show the trace and ask before drawing |
 | `--svg FILE` | | write an animated SVG of the strokes being drawn and exit |
-| `--speed-range` | 120,1500 | points/s for the thickest and thinnest ink: thick parts are drawn slowly, thin parts fast. Velocity-based pads (most e-sign sites: fast = thinner line) then reproduce the original's thick/thin strokes |
+| `--speed-range` | 80,1000 | points/s for the thickest and thinnest ink: thick parts are drawn slowly, thin parts fast. Velocity-based pads (most e-sign sites: fast = thinner line) then reproduce the original's thick/thin strokes |
+| `--calibrate` | off | draw six lines at 60–2000 points/s instead of the signature, to see how a pad's line width responds to speed and pick a `--speed-range` |
 | `--speed` | off | constant speed in points/s instead (e.g. 300), for pads with a fixed line width |
 | `--margin` | 0.08 | padding inside the field, as a fraction |
 | `--lift-ms` | 60 | pause between strokes |

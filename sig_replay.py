@@ -485,12 +485,22 @@ def draw(strokes, size, box, speed_fn, margin, lift_ms):
             mouse.drag(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
         return scr[-1]
 
+    def settle(p):
+        """Rest on the end point before lifting. Pads that sample on a timer (e.g. every
+        16 ms) otherwise drop the last ~20-30 ms of movement, which erases the end of
+        every stroke and all of a short, fast one."""
+        for _ in range(2):
+            time.sleep(0.018)
+            mouse.drag(*p)
+        time.sleep(0.006)
+
     pen = None  # screen position where the pen is down, or None
     try:
         for s in strokes:
             start = tf(s[0])
             if pen is None or math.dist(pen, start) > 1.5:
                 if pen is not None:
+                    settle(pen)
                     mouse.up(*pen)
                     time.sleep(lift_ms / 1000)
                 if not mouse.move_and_verify(*start):
@@ -509,6 +519,7 @@ def draw(strokes, size, box, speed_fn, margin, lift_ms):
             else:
                 pen = trace_stroke(s)
         if pen is not None:
+            settle(pen)
             mouse.up(*pen)
     except KeyboardInterrupt as e:
         if mouse.down and mouse.last:
@@ -527,11 +538,14 @@ def main():
     ap.add_argument("--box", help="x1,y1,x2,y2 screen points of the signature area (skips picking)")
     ap.add_argument("--speed", type=float,
                     help="constant pen speed in points/s; turns off thickness-based speed")
-    ap.add_argument("--speed-range", default="120,1500", metavar="SLOW,FAST",
-                    help="points/s used for the thickest and thinnest ink (default 120,1500)")
+    ap.add_argument("--speed-range", default="80,1000", metavar="SLOW,FAST",
+                    help="points/s used for the thickest and thinnest ink (default 80,1000)")
     ap.add_argument("--margin", type=float, default=0.08, help="padding inside the box, fraction (default 0.08)")
     ap.add_argument("--lift-ms", type=float, default=60, help="pause between strokes (default 60)")
     ap.add_argument("--wait", type=int, default=5, help="countdown before drawing, seconds (default 5)")
+    ap.add_argument("--calibrate", action="store_true",
+                    help="draw test lines at increasing speeds (top slow, bottom fast) instead of the "
+                         "signature, to see how a pad's line width responds to speed")
     ap.add_argument("--threshold", type=float, help="ink threshold 0-255 for opaque images (default: Otsu)")
     args = ap.parse_args()
 
@@ -562,6 +576,16 @@ def main():
                  "didn't move between them. Run again and move the mouse before each Enter.")
     print(f"Box: --box {','.join(f'{v:.0f}' for v in box)}")
     countdown("Click the target window's title bar now to focus it (not the pad). Drawing in", args.wait)
+    if args.calibrate:
+        speeds = [60, 120, 250, 500, 1000, 2000]
+        bw, bh = box[2] - box[0], box[3] - box[1]
+        rows = [bh * (i + 0.5) / len(speeds) for i in range(len(speeds))]
+        lines = [[(bw * 0.05, y), (bw * 0.95, y)] for y in rows]
+        print("Calibration lines, top to bottom (points/s): " + ", ".join(map(str, speeds)))
+        draw(lines, (bw, bh), box, lambda p: speeds[min(range(len(rows)), key=lambda i: abs(rows[i] - p[1]))],
+             0.0, args.lift_ms)
+        print("Done.")
+        return
     if args.speed:
         speed_fn = lambda p: args.speed  # noqa: E731
     else:
