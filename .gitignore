@@ -1,0 +1,15 @@
+# Never commit signatures or anything derived from them.
+*.png
+*.jpg
+*.jpeg
+*.heic
+*.gif
+*.webp
+*.tif
+*.tiff
+*.bmp
+*.pdf
+*.svg
+
+__pycache__/
+.DS_Store
