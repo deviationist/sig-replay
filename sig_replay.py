@@ -14,10 +14,10 @@ Usage:
   sig_replay.py SIGNATURE.png                       # pick the pad corners, then draw
   sig_replay.py SIGNATURE.png --preview             # look at the trace first, then draw
   sig_replay.py SIGNATURE.png --box 400,500,900,650 # reuse corners from a previous run
-  sig_replay.py SIGNATURE.png --gif demo.gif        # write an animation of the strokes, no drawing
+  sig_replay.py SIGNATURE.png --svg demo.svg        # write an animated SVG of the strokes, no drawing
 
 Writes nothing to disk except a temporary preview image, deleted again in the same run
-(and the --gif file, when asked for).
+(and the --svg file, when asked for).
 
 Abort mid-draw by grabbing the mouse and moving it: any deviation from where the
 script put the cursor releases the button and stops.
@@ -228,57 +228,68 @@ def render_preview(mask, strokes, out, scale=3):
     bg.save(out)
 
 
-def write_gif(mask, strokes, out, width=720, seconds=4.0, fps=25, hold=1.5):
-    """Animate the replay: strokes appear in drawing order over a faint copy of the image."""
+def _bezier_path(pts, sx, sy):
+    """Smooth path through the points (Catmull-Rom converted to cubic Bezier)."""
+    P = [(x * sx, y * sy) for x, y in pts]
+    if len(P) == 1:
+        x, y = P[0]
+        return f"M{x:.1f} {y:.1f}l0.1 0.1"
+    d = [f"M{P[0][0]:.1f} {P[0][1]:.1f}"]
+    for i in range(len(P) - 1):
+        p0, p1, p2 = P[max(i - 1, 0)], P[i], P[i + 1]
+        p3 = P[min(i + 2, len(P) - 1)]
+        c1 = (p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6)
+        c2 = (p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6)
+        d.append(f"C{c1[0]:.1f} {c1[1]:.1f} {c2[0]:.1f} {c2[1]:.1f} {p2[0]:.1f} {p2[1]:.1f}")
+    return "".join(d)
+
+
+def write_svg(mask, strokes, out, width=720, speed=500.0, lift=0.12, hold=2.0, fade=0.4,
+              label="A signature being drawn stroke by stroke"):
+    """Animated SVG of the replay: each stroke draws itself in order (CSS keyframes on
+    stroke-dashoffset), holds, fades and loops. Works inside a GitHub README <img>:
+    scripting is off there, declarative animation isn't. prefers-reduced-motion shows the
+    finished signature; prefers-color-scheme switches the ink for dark mode."""
+    from xml.sax.saxutils import escape
+
     h, w = mask.shape
-    ss = 2  # draw at 2x, downsample each frame for anti-aliasing
-    pad = 24
+    pad = 12
     k = (width - 2 * pad) / w
-    W, H = width, int(h * k) + 2 * pad
-    ghost = Image.fromarray(np.where(mask, 232, 255).astype(np.uint8)).convert("RGB")
-    ghost = ghost.resize((int(w * k), int(h * k)), Image.LANCZOS)
-    base = Image.new("RGB", (W, H), "white")
-    base.paste(ghost, (pad, pad))
-    base = base.resize((W * ss, H * ss), Image.LANCZOS)
+    W, H = width, round(h * k + 2 * pad)
+    ink_w = max(1.6, (mask.sum() / max(np.count_nonzero(skeletonize(mask)), 1)) * k * 0.8)
 
-    def tf(p):
-        return ((pad + p[0] * k) * ss, (pad + p[1] * k) * ss)
+    lens = [sum(math.dist(a, b) for a, b in zip(s, s[1:])) * k for s in strokes]
+    draw_t = [max(L / speed, 0.03) for L in lens]
+    total = sum(draw_t) + lift * (len(strokes) - 1) + hold + fade
+    T = total * 1000
 
-    segs = []  # (stroke index, a, b, length)
-    for i, s in enumerate(strokes):
-        pts = [tf(p) for p in s] if len(s) > 1 else [tf(s[0]), tf((s[0][0] + 0.5, s[0][1] + 0.5))]
-        for a, b in zip(pts, pts[1:]):
-            segs.append((a, b, max(math.dist(a, b), 0.01)))
-    total = sum(sg[2] for sg in segs)
-    n = int(seconds * fps)
-    ink, tip, lw = (18, 32, 110), (220, 60, 60), 3 * ss
+    def pct(t):
+        return f"{t / total * 100:.3f}%"
 
-    canvas = base.copy()
-    d = ImageDraw.Draw(canvas)
-    frames, done, j = [], 0.0, 0
-    for f in range(1, n + 1):
-        target = total * f / n
-        pen = None
-        while j < len(segs) and done + segs[j][2] <= target:
-            a, b, L = segs[j]
-            d.line([a, b], fill=ink, width=lw)
-            d.ellipse((b[0] - lw / 2, b[1] - lw / 2, b[0] + lw / 2, b[1] + lw / 2), fill=ink)
-            done += L
-            pen = b
-            j += 1
-        frame = canvas.copy()
-        if j < len(segs):  # partial segment + pen tip
-            a, b, L = segs[j]
-            t = (target - done) / L
-            pen = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-            ImageDraw.Draw(frame).line([a, pen], fill=ink, width=lw)
-        if pen and f < n:
-            r = 5 * ss
-            ImageDraw.Draw(frame).ellipse((pen[0] - r, pen[1] - r, pen[0] + r, pen[1] + r), fill=tip)
-        frames.append(frame.resize((W, H), Image.LANCZOS).quantize(colors=64, dither=Image.NONE))
-    durations = [int(1000 / fps)] * (len(frames) - 1) + [int(hold * 1000)]
-    frames[0].save(out, save_all=True, append_images=frames[1:], duration=durations, loop=0,
-                   optimize=True, disposal=1)
+    css, paths, t = [], [], 0.0
+    for i, (s, dt) in enumerate(zip(strokes, draw_t)):
+        d = _bezier_path([(x + pad / k, y + pad / k) for x, y in s], k, k)
+        css.append(f"#s{i}{{animation:d{i} {T:.0f}ms linear infinite}}"
+                   f"@keyframes d{i}{{0%,{pct(t)}{{stroke-dashoffset:1}}{pct(t + dt)},100%{{stroke-dashoffset:0}}}}")
+        paths.append(f'<path id="s{i}" pathLength="1" d="{d}"/>')
+        t += dt + lift
+    t_end = total - fade
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="{escape(label)}">
+  <style>
+    path{{fill:none;stroke:#1a2a6c;stroke-width:{ink_w:.2f};stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1 1;stroke-dashoffset:1}}
+    g{{animation:f {T:.0f}ms linear infinite}}
+    @keyframes f{{0%,{pct(t_end)}{{opacity:1}}100%{{opacity:0}}}}
+    {"".join(css)}
+    @media (prefers-color-scheme:dark){{path{{stroke:#c9d4ff}}}}
+    @media (prefers-reduced-motion:reduce){{g,path{{animation:none!important}}path{{stroke-dashoffset:0}}}}
+  </style>
+  <g>
+    {chr(10).join("    " + p for p in paths).strip()}
+  </g>
+</svg>
+"""
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(svg)
 
 
 def _hsv(h, s, v):
@@ -511,8 +522,8 @@ def main():
     ap.add_argument("image")
     ap.add_argument("--preview", action="store_true",
                     help="show the traced strokes first and ask before drawing (nothing is kept on disk)")
-    ap.add_argument("--gif", metavar="OUT.gif",
-                    help="write an animation of the strokes being drawn and exit (no mouse control)")
+    ap.add_argument("--svg", metavar="OUT.svg",
+                    help="write an animated SVG of the strokes being drawn and exit (no mouse control)")
     ap.add_argument("--box", help="x1,y1,x2,y2 screen points of the signature area (skips picking)")
     ap.add_argument("--speed", type=float,
                     help="constant pen speed in points/s; turns off thickness-based speed")
@@ -528,9 +539,9 @@ def main():
     n_pts = sum(len(s) for s in strokes)
     print(f"Traced {len(strokes)} strokes, {n_pts} points, image {mask.shape[1]}x{mask.shape[0]} px")
 
-    if args.gif:
-        write_gif(mask, strokes, args.gif)
-        print(f"Animation written to {args.gif}")
+    if args.svg:
+        write_svg(mask, strokes, args.svg)
+        print(f"Animation written to {args.svg}")
         return
 
     if args.preview:

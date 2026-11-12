@@ -17,4 +17,4 @@ __pycache__/
 # Exceptions: the fake test signatures and the README animation made from them.
 !examples/john-doe.png
 !examples/john-doe.jpg
-!docs/demo.gif
+!assets/demo-*.svg

@@ -3,7 +3,9 @@
 Draws a stored signature on an online signature pad by tracing the image into pen
 strokes and replaying them as a real mouse drag.
 
-![The test signature being traced and replayed stroke by stroke](docs/demo.gif)
+<div align="center">
+  <img src="assets/demo-71c45e.svg" alt="sig-replay drawing the made-up John Doe test signature: the traced strokes appear one by one in the order the mouse draws them, from the sweeping J to the long tail off the final e, then the finished signature holds and fades before the loop restarts">
+</div>
 
 - **Platform:** drawing is macOS only (it posts mouse events through Quartz). Tracing and
   `--preview` work anywhere Python runs.
@@ -93,7 +95,7 @@ It prints `--box x1,y1,x2,y2`; pass that to skip steps 4–5 if you need to redo
 | Option | Default | |
 |---|---|---|
 | `--preview` | off | show the trace and ask before drawing |
-| `--gif FILE` | | write an animation of the strokes being drawn and exit |
+| `--svg FILE` | | write an animated SVG of the strokes being drawn and exit |
 | `--speed-range` | 120,1500 | points/s for the thickest and thinnest ink: thick parts are drawn slowly, thin parts fast. Velocity-based pads (most e-sign sites: fast = thinner line) then reproduce the original's thick/thin strokes |
 | `--speed` | off | constant speed in points/s instead (e.g. 300), for pads with a fixed line width |
 | `--margin` | 0.08 | padding inside the field, as a fraction |
@@ -103,8 +105,18 @@ It prints `--box x1,y1,x2,y2`; pass that to skip steps 4–5 if you need to redo
 
 Try it on a scratch canvas first (section 2) before the real document.
 
-To make an animation like the one above from any signature (writes a file, no mouse control):
+## Assets
+
+The README animation is generated from the test signature:
 
 ```bash
-./sig_replay.py examples/john-doe.png --gif demo.gif
+tools/generate-readme-svg.sh   # → assets/demo-<hash>.svg + README ref
 ```
+
+It's an SVG with CSS keyframes: each traced stroke draws itself in order via an animated
+stroke dash. GitHub renders an SVG in `<img>` with scripting off but declarative animation
+on, so it plays in the README. `prefers-reduced-motion` shows the finished signature, and
+`prefers-color-scheme` switches the ink for dark mode. The hash in the filename busts
+GitHub's image cache; commit the SVG together with the README.
+
+`./sig_replay.py SIGNATURE --svg out.svg` makes the same animation from any signature.
