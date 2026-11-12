@@ -249,7 +249,7 @@ def write_svg(mask, strokes, out, width=720, speed=500.0, lift=0.12, hold=2.0, f
     """Animated SVG of the replay: each stroke draws itself in order (CSS keyframes on
     stroke-dashoffset), holds, fades and loops. Works inside a GitHub README <img>:
     scripting is off there, declarative animation isn't. prefers-reduced-motion shows the
-    finished signature; prefers-color-scheme switches the ink for dark mode."""
+    finished signature. Black ink on a white card reads the same in light and dark mode."""
     from xml.sax.saxutils import escape
 
     h, w = mask.shape
@@ -276,13 +276,13 @@ def write_svg(mask, strokes, out, width=720, speed=500.0, lift=0.12, hold=2.0, f
     t_end = total - fade
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-label="{escape(label)}">
   <style>
-    path{{fill:none;stroke:#1a2a6c;stroke-width:{ink_w:.2f};stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1 1;stroke-dashoffset:1}}
+    path{{fill:none;stroke:#000;stroke-width:{ink_w:.2f};stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1 1;stroke-dashoffset:1}}
     g{{animation:f {T:.0f}ms linear infinite}}
     @keyframes f{{0%,{pct(t_end)}{{opacity:1}}100%{{opacity:0}}}}
     {"".join(css)}
-    @media (prefers-color-scheme:dark){{path{{stroke:#c9d4ff}}}}
     @media (prefers-reduced-motion:reduce){{g,path{{animation:none!important}}path{{stroke-dashoffset:0}}}}
   </style>
+  <rect width="{W}" height="{H}" rx="8" fill="#fff"/>
   <g>
     {chr(10).join("    " + p for p in paths).strip()}
   </g>

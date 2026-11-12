@@ -4,7 +4,7 @@ Draws a stored signature on an online signature pad by tracing the image into pe
 strokes and replaying them as a real mouse drag.
 
 <div align="center">
-  <img src="assets/demo-71c45e.svg" alt="sig-replay drawing the made-up John Doe test signature: the traced strokes appear one by one in the order the mouse draws them, from the sweeping J to the long tail off the final e, then the finished signature holds and fades before the loop restarts">
+  <img src="assets/demo-c0aa5b.svg" alt="sig-replay drawing the made-up John Doe test signature: the traced strokes appear one by one in the order the mouse draws them, from the sweeping J to the long tail off the final e, then the finished signature holds and fades before the loop restarts">
 </div>
 
 - **Platform:** drawing is macOS only (it posts mouse events through Quartz). Tracing and
@@ -115,8 +115,8 @@ tools/generate-readme-svg.sh   # → assets/demo-<hash>.svg + README ref
 
 It's an SVG with CSS keyframes: each traced stroke draws itself in order via an animated
 stroke dash. GitHub renders an SVG in `<img>` with scripting off but declarative animation
-on, so it plays in the README. `prefers-reduced-motion` shows the finished signature, and
-`prefers-color-scheme` switches the ink for dark mode. The hash in the filename busts
+on, so it plays in the README. `prefers-reduced-motion` shows the finished signature, and the black ink on a white
+card reads the same in GitHub's light and dark themes. The hash in the filename busts
 GitHub's image cache; commit the SVG together with the README.
 
 `./sig_replay.py SIGNATURE --svg out.svg` makes the same animation from any signature.
