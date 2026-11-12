@@ -14,6 +14,7 @@ Usage:
   sig_replay.py SIGNATURE.png                       # pick the pad corners, then draw
   sig_replay.py SIGNATURE.png --preview             # look at the trace first, then draw
   sig_replay.py SIGNATURE.png --box 400,500,900,650 # reuse corners from a previous run
+  sig_replay.py SIGNATURE.png --debug               # see how the image is trimmed and traced, no drawing
   sig_replay.py SIGNATURE.png --svg demo.svg        # write an animated SVG of the strokes, no drawing
 
 Writes nothing to disk except a temporary preview image, deleted again in the same run
@@ -44,7 +45,8 @@ DIAG = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
 
 
 # ---------------------------------------------------------------- image -> mask
-def load_mask(path: str, threshold: float | None) -> np.ndarray:
+def ink_mask(path: str, threshold: float | None) -> tuple[np.ndarray, str]:
+    """Full-size ink mask of the image, plus a note on how ink was told from background."""
     img = Image.open(path)
     if img.mode in ("RGBA", "LA", "P"):
         img = img.convert("RGBA")
@@ -52,21 +54,31 @@ def load_mask(path: str, threshold: float | None) -> np.ndarray:
         alpha = rgba[..., 3]
         if alpha.min() < 250:  # transparent background: ink is what's opaque *and* dark-ish
             lum = rgba[..., :3].mean(axis=2)
-            mask = (alpha > 128) & (lum < 230)
-            return _clean(mask)
+            return _clean((alpha > 128) & (lum < 230)), "transparent background: opaque pixels are ink"
         img = img.convert("RGB")
     gray = np.asarray(img.convert("L")).astype(float)
     t = threshold if threshold is not None else threshold_otsu(gray)
-    return _clean(gray < t)
+    how = f"brightness below {t:.0f} is ink ({'--threshold' if threshold is not None else 'automatic'})"
+    return _clean(gray < t), how
 
 
 def _clean(mask: np.ndarray) -> np.ndarray:
     mask = remove_small_objects(mask, max_size=8)
-    mask = remove_small_holes(mask, max_size=12)  # pinholes inside thick strokes become fake loops
+    return remove_small_holes(mask, max_size=12)  # pinholes inside thick strokes become fake loops
+
+
+def ink_box(mask: np.ndarray) -> tuple[int, int, int, int]:
     ys, xs = np.nonzero(mask)
     if len(xs) == 0:
         sys.exit("No ink found in image (try --threshold).")
-    return mask[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+    return xs.min(), ys.min(), xs.max(), ys.max()
+
+
+def load_mask(path: str, threshold: float | None) -> np.ndarray:
+    """Ink mask cropped to the ink: surrounding background is dropped before scaling."""
+    mask, _ = ink_mask(path, threshold)
+    x0, y0, x1, y1 = ink_box(mask)
+    return mask[y0 : y1 + 1, x0 : x1 + 1]
 
 
 # ------------------------------------------------------------ skeleton -> paths
@@ -189,8 +201,8 @@ def build_strokes(path: str, threshold: float | None):
 
 
 # --------------------------------------------------------------------- preview
-def show_preview(mask, strokes):
-    """Render the trace to a temp file, open it, and delete it once the user has looked."""
+def show_image(img: Image.Image, prompt: str):
+    """Open an image in the system viewer from a temp file; delete it once the user is done."""
     import os
     import subprocess
     import tempfile
@@ -198,34 +210,90 @@ def show_preview(mask, strokes):
     fd, path = tempfile.mkstemp(prefix="sig-replay-", suffix=".png")
     os.close(fd)
     try:
-        render_preview(mask, strokes, path)
+        img.save(path)
         opener = {"darwin": ["open"], "win32": ["cmd", "/c", "start", ""]}.get(sys.platform, ["xdg-open"])
         subprocess.run([*opener, path], check=False)
-        try:
-            input("Preview opened (colour + number = stroke and drawing order). "
-                  "Enter to continue, Ctrl-C to stop: ")
-        except (KeyboardInterrupt, EOFError):
-            sys.exit("\nStopped.")
+        input(prompt)
     finally:
         os.remove(path)
 
 
-def render_preview(mask, strokes, out, scale=3):
+def stroke_image(mask, strokes, scale=1.0):
+    """Traced pen paths over a faint copy of the ink; colour + number = stroke and drawing order."""
     h, w = mask.shape
-    bg = Image.fromarray(np.where(mask, 225, 255).astype(np.uint8)).convert("RGB")
-    bg = bg.resize((w * scale, h * scale), Image.NEAREST)
-    d = ImageDraw.Draw(bg)
+    W, H = max(1, round(w * scale)), max(1, round(h * scale))
+    img = Image.fromarray(np.where(mask, 225, 255).astype(np.uint8)).convert("RGB").resize((W, H), Image.LANCZOS)
+    d = ImageDraw.Draw(img)
+    font = _font(18)
+    lw = 3
     for i, s in enumerate(strokes):
-        hue = (i * 0.61803) % 1
-        col = tuple(int(255 * v) for v in _hsv(hue, 0.85, 0.75))
-        pts = [(x * scale + scale / 2, y * scale + scale / 2) for x, y in s]
+        col = tuple(int(255 * v) for v in _hsv((i * 0.61803) % 1, 0.85, 0.75))
+        pts = [(x * scale, y * scale) for x, y in s]
         if len(pts) == 1:
             x, y = pts[0]
-            d.ellipse((x - 3, y - 3, x + 3, y + 3), fill=col)
+            d.ellipse((x - lw, y - lw, x + lw, y + lw), fill=col)
         else:
-            d.line(pts, fill=col, width=3)
-        d.text((pts[0][0] + 3, pts[0][1] - 12), str(i + 1), fill=col)
-    bg.save(out)
+            d.line(pts, fill=col, width=lw, joint="curve")
+        d.text((pts[0][0] + 4, pts[0][1] - 4), str(i + 1), fill=col, font=font, anchor="ls")
+    return img
+
+
+def debug_sheet(path, threshold, mask, strokes, width=1400):
+    """One image showing each step: the file as saved with its ink box, the ink cropped out
+    of it, and the pen paths traced from that ink (what the mouse will draw)."""
+    full, how = ink_mask(path, threshold)
+    x0, y0, x1, y1 = ink_box(full)
+    src = Image.open(path).convert("RGBA")
+    W, H = src.size
+    # show transparency as a checkerboard so it's visible
+    yy, xx = np.mgrid[0:H, 0:W]
+    checker = np.where(((yy // 16 + xx // 16) % 2) == 0, 255, 232).astype(np.uint8)
+    base = Image.fromarray(checker).convert("RGBA")
+    base.alpha_composite(src)
+    base = base.convert("RGB")
+
+    k = min(1.0, (width - 40) / W)
+    font = _font(22)
+    red = (220, 40, 40)
+
+    def panel(img, title, detail, box=None):
+        if img.width != round(mask.shape[1] * k) or box is not None:  # not drawn at sheet size yet
+            img = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))), Image.LANCZOS)
+        d = ImageDraw.Draw(img)
+        if box is not None:
+            d.rectangle([round(v * k) for v in box], outline=red, width=3)
+        else:
+            d.rectangle((0, 0, img.width - 1, img.height - 1), outline=red, width=3)
+        out = Image.new("RGB", (width, img.height + 90), "white")
+        dd = ImageDraw.Draw(out)
+        dd.text((20, 14), title, fill="black", font=_font(26))
+        dd.text((20, 50), detail, fill=(90, 90, 90), font=font)
+        out.paste(img, (20, 84))
+        return out
+
+    p1 = panel(base, f"1. {path.rsplit('/', 1)[-1]} as saved: {W} x {H} px",
+               f"Red = the ink's bounding box. Trimmed away: left {x0}, right {W - 1 - x1}, "
+               f"top {y0}, bottom {H - 1 - y1} px", box=(x0, y0, x1, y1))
+    crop = Image.fromarray(np.where(mask, 0, 255).astype(np.uint8)).convert("RGB")
+    p2 = panel(crop, f"2. Ink found and trimmed: {mask.shape[1]} x {mask.shape[0]} px",
+               f"{how}. This area is scaled to fit the box you mark.")
+    p3 = panel(stroke_image(mask, strokes, scale=k), f"3. Traced pen paths: {len(strokes)} strokes",
+               "What the mouse draws, along the middle of the ink. Colour + number = stroke and drawing order.")
+    gap = 16
+    sheet = Image.new("RGB", (width, p1.height + p2.height + p3.height + 2 * gap), (225, 225, 225))
+    y = 0
+    for im in (p1, p2, p3):
+        sheet.paste(im, (0, y))
+        y += im.height + gap
+    return sheet
+
+
+def _font(size):
+    from PIL import ImageFont
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:  # Pillow < 10.1
+        return ImageFont.load_default()
 
 
 def _bezier_path(pts, sx, sy):
@@ -355,6 +423,27 @@ class Mouse:
         self.down = False
 
 
+def watch_escape():
+    """Stop the tool when Escape is pressed, wherever keyboard focus is (while drawing it's
+    in the target app, not this terminal). Polls the key state; raises KeyboardInterrupt in
+    the main thread, which releases the mouse button and exits."""
+    import _thread
+    import threading
+
+    import Quartz as Q
+    ESC = 53  # macOS virtual key code
+
+    def poll():
+        while True:
+            if Q.CGEventSourceKeyState(Q.kCGEventSourceStateCombinedSessionState, ESC):
+                print("\nEscape pressed.", flush=True)
+                _thread.interrupt_main()
+                return
+            time.sleep(0.03)
+
+    threading.Thread(target=poll, daemon=True).start()
+
+
 def no_permission_msg(reason: str) -> str:
     import os
     app = {"iTerm.app": "iTerm", "Apple_Terminal": "Terminal", "ghostty": "Ghostty",
@@ -396,7 +485,7 @@ def pick_point(mouse, label):
     def live():
         while not stop.is_set():
             x, y = mouse.pos()
-            print(f"\r  Hover over the {label}, press Enter.  pointer = {x:5.0f},{y:5.0f} ",
+            print(f"\r  Hover over the {label}, press Enter (Esc quits).  pointer = {x:5.0f},{y:5.0f} ",
                   end="", flush=True)
             time.sleep(0.05)
 
@@ -524,7 +613,7 @@ def draw(strokes, size, box, speed_fn, margin, lift_ms):
     except KeyboardInterrupt as e:
         if mouse.down and mouse.last:
             mouse.up(*mouse.last)
-        sys.exit(f"\nAborted: {e or 'Ctrl-C'}")
+        sys.exit(f"\nAborted{': ' + str(e) if str(e) else ''}. Mouse button released.")
 
 
 # ------------------------------------------------------------------------ main
@@ -532,7 +621,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("image")
     ap.add_argument("--preview", action="store_true",
-                    help="show the traced strokes first and ask before drawing (nothing is kept on disk)")
+                    help="show how the image is trimmed and traced, then ask before drawing "
+                         "(temporary image, deleted afterwards)")
+    ap.add_argument("--debug", nargs="?", const="", metavar="OUT.png",
+                    help="show how the image is trimmed and traced, then exit without drawing "
+                         "(no mouse control; works on any OS). With a filename, save the sheet there instead")
     ap.add_argument("--svg", metavar="OUT.svg",
                     help="write an animated SVG of the strokes being drawn and exit (no mouse control)")
     ap.add_argument("--box", help="x1,y1,x2,y2 screen points of the signature area (skips picking)")
@@ -548,6 +641,8 @@ def main():
                          "signature, to see how a pad's line width responds to speed")
     ap.add_argument("--threshold", type=float, help="ink threshold 0-255 for opaque images (default: Otsu)")
     args = ap.parse_args()
+    if sys.platform == "darwin" and not args.svg and not args.debug:  # interactive run
+        watch_escape()
 
     mask, strokes = build_strokes(args.image, args.threshold)
     n_pts = sum(len(s) for s in strokes)
@@ -558,8 +653,20 @@ def main():
         print(f"Animation written to {args.svg}")
         return
 
-    if args.preview:
-        show_preview(mask, strokes)
+    if args.debug:  # a filename: save the sheet and stop
+        debug_sheet(args.image, args.threshold, mask, strokes).save(args.debug)
+        print(f"Trace sheet written to {args.debug}")
+        return
+    if args.debug is not None or args.preview:
+        debug = args.debug is not None
+        sheet = debug_sheet(args.image, args.threshold, mask, strokes)
+        try:
+            show_image(sheet, "Opened the trace sheet. Press Enter to close it" +
+                       (": " if debug else " and continue to drawing, Ctrl-C to stop: "))
+        except (KeyboardInterrupt, EOFError):
+            sys.exit("\nStopped.")
+        if debug:
+            return
 
     if sys.platform != "darwin":
         sys.exit("Drawing is implemented for macOS only.")
@@ -575,7 +682,7 @@ def main():
                  f"({box[0]:.0f},{box[1]:.0f} -> {box[2]:.0f},{box[3]:.0f}); the pointer probably "
                  "didn't move between them. Run again and move the mouse before each Enter.")
     print(f"Box: --box {','.join(f'{v:.0f}' for v in box)}")
-    countdown("Click the target window's title bar now to focus it (not the pad). Drawing in", args.wait)
+    countdown("Click the target window's title bar now to focus it (not the pad). Esc stops at any time. Drawing in", args.wait)
     if args.calibrate:
         speeds = [60, 120, 250, 500, 1000, 2000]
         bw, bh = box[2] - box[0], box[3] - box[1]

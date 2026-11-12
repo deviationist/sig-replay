@@ -18,3 +18,4 @@ __pycache__/
 !examples/john-doe.png
 !examples/john-doe.jpg
 !assets/demo-*.svg
+!assets/trace-*.png
