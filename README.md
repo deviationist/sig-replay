@@ -41,11 +41,15 @@ that terminal can control your mouse and keyboard.
 
 ## 2. Try it with the test signature
 
-`examples/john-doe.png` is a made-up signature for practising. Open a free browser
-paint app such as [Kleki](https://kleki.com/), pick a thin pen, and run:
+`examples/` has a made-up "John Doe" signature for practising, in both input styles:
+
+- `john-doe.jpg`: ink on a white background (like a scan or a photo)
+- `john-doe.png`: ink on a transparent background
+
+Open a free browser paint app such as [Kleki](https://kleki.com/), pick a thin pen, and run:
 
 ```bash
-./sig_replay.py examples/john-doe.png --preview
+./sig_replay.py examples/john-doe.jpg --preview
 ```
 
 then follow the steps in section 4. No account or sign-up needed, and nothing you draw
@@ -104,7 +108,3 @@ To make an animation like the one above from any signature (writes a file, no mo
 ```bash
 ./sig_replay.py examples/john-doe.png --gif demo.gif
 ```
-
-The test signature is the text "John Doe" set in
-[Great Vibes](https://github.com/googlefonts/great-vibes) (SIL Open Font License) with a
-drawn underline.
