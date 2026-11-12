@@ -11,9 +11,11 @@
 """Trace a signature image into pen strokes and replay them as a mouse drag.
 
 Usage:
-  sig_replay.py SIGNATURE.png --preview out.png     # check the trace, draws nothing
   sig_replay.py SIGNATURE.png                       # pick the pad corners, then draw
+  sig_replay.py SIGNATURE.png --preview             # look at the trace first, then draw
   sig_replay.py SIGNATURE.png --box 400,500,900,650 # reuse corners from a previous run
+
+Writes nothing to disk except a temporary preview image, deleted again in the same run.
 
 Abort mid-draw by grabbing the mouse and moving it: any deviation from where the
 script put the cursor releases the button and stops.
@@ -185,6 +187,27 @@ def build_strokes(path: str, threshold: float | None):
 
 
 # --------------------------------------------------------------------- preview
+def show_preview(mask, strokes):
+    """Render the trace to a temp file, open it, and delete it once the user has looked."""
+    import os
+    import subprocess
+    import tempfile
+
+    fd, path = tempfile.mkstemp(prefix="sig-replay-", suffix=".png")
+    os.close(fd)
+    try:
+        render_preview(mask, strokes, path)
+        opener = {"darwin": ["open"], "win32": ["cmd", "/c", "start", ""]}.get(sys.platform, ["xdg-open"])
+        subprocess.run([*opener, path], check=False)
+        try:
+            input("Preview opened (colour + number = stroke and drawing order). "
+                  "Enter to continue, Ctrl-C to stop: ")
+        except (KeyboardInterrupt, EOFError):
+            sys.exit("\nStopped.")
+    finally:
+        os.remove(path)
+
+
 def render_preview(mask, strokes, out, scale=3):
     h, w = mask.shape
     bg = Image.fromarray(np.where(mask, 225, 255).astype(np.uint8)).convert("RGB")
@@ -382,7 +405,8 @@ def draw(strokes, size, box, speed, margin, lift_ms):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("image")
-    ap.add_argument("--preview", metavar="PNG", help="write a trace preview and exit")
+    ap.add_argument("--preview", action="store_true",
+                    help="show the traced strokes first and ask before drawing (nothing is kept on disk)")
     ap.add_argument("--box", help="x1,y1,x2,y2 screen points of the signature area (skips picking)")
     ap.add_argument("--speed", type=float, default=600, help="pen speed in screen points/s (default 600)")
     ap.add_argument("--margin", type=float, default=0.08, help="padding inside the box, fraction (default 0.08)")
@@ -396,9 +420,7 @@ def main():
     print(f"Traced {len(strokes)} strokes, {n_pts} points, image {mask.shape[1]}x{mask.shape[0]} px")
 
     if args.preview:
-        render_preview(mask, strokes, args.preview)
-        print(f"Preview written to {args.preview}")
-        return
+        show_preview(mask, strokes)
 
     if sys.platform != "darwin":
         sys.exit("Drawing is implemented for macOS only.")
@@ -420,4 +442,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        sys.exit("\nStopped.")

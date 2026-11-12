@@ -37,50 +37,49 @@ blocks it. Use a Mac you administer.
 **When you're done signing, switch it off again.** While it's on, anything run from
 that terminal can control your mouse and keyboard.
 
-## 2. Get the signature as an image
+## 2. Get the signature as an image (once)
 
 For a signature saved in Preview (Tools → Annotate → Signatures):
 
-1. Open a blank white image in Preview. To make one:
-   `uv run --with pillow python -c "from PIL import Image; Image.new('RGB',(2400,1200),'white').save('blank.png')" && open -a Preview blank.png`
+1. Open a blank white page in Preview. This makes one in a temp folder:
+   `uv run --with pillow python -c "from PIL import Image; Image.new('RGB',(2400,1200),'white').save('/tmp/blank.png')" && open -a Preview /tmp/blank.png`
 2. Insert the signature and drag it **large** (more pixels give a cleaner trace).
 3. Click empty space to deselect it, so the selection handles aren't captured.
-4. Press ⌘⇧4, drag a box around it, and move the screenshot here, e.g. `sig1.png`.
-   Don't save `blank.png`.
+4. Press ⌘⇧4, drag a box around the signature, and keep the screenshot somewhere private,
+   e.g. `signature.png`. Close the blank page without saving and delete it:
+   `rm /tmp/blank.png`.
 
-PNG or JPG both work, with or without a transparent background.
+PNG or JPG both work, with or without a transparent background. This image is the only
+file the tool needs, and it never writes anything next to it.
 
-## 3. Check the trace
+## 3. Sign
 
-```bash
-./sig_replay.py sig1.png --preview sig1-preview.png && open sig1-preview.png
-```
-
-Each stroke has its own colour and a number for its drawing order.
-
-## 4. Draw
-
-```bash
-./sig_replay.py sig1.png
-```
-
-1. Hover over the **top-left** of the signature area and press **Enter**. Don't click:
+1. Open the page with the signature field.
+2. Run:
+   ```bash
+   ./sig_replay.py signature.png --preview
+   ```
+3. The trace opens (each stroke has its own colour and a number for its drawing order).
+   Press **Enter** if it looks right. The preview file is deleted straight away.
+   Leave out `--preview` once you trust the trace.
+4. Hover over the **top-left** of the signature field and press **Enter**. Don't click:
    the terminal keeps keyboard focus while the mouse is over the other window.
-2. Hover over the **bottom-right** and press **Enter**.
-3. During the countdown, click the target window's **title bar** (not the pad) and let go
-   of the mouse.
-4. It draws. The signature is scaled to fit the area with its proportions kept.
+5. Hover over the **bottom-right** and press **Enter**.
+6. During the countdown, click the target window's **title bar** (not the field) and let
+   go of the mouse.
+7. It draws, scaled to fit the field with its proportions kept. Done.
 
-It prints `--box x1,y1,x2,y2`. Pass that to skip step 1–2 next time.
 **Abort** by moving the mouse yourself: it releases the button and stops.
+It prints `--box x1,y1,x2,y2`; pass that to skip steps 4–5 if you need to redo it.
 
 | Option | Default | |
 |---|---|---|
+| `--preview` | off | show the trace and ask before drawing |
 | `--speed` | 600 | pen speed in points/s; lower it (e.g. 300) if curves come out jagged |
-| `--margin` | 0.08 | padding inside the area, as a fraction |
+| `--margin` | 0.08 | padding inside the field, as a fraction |
 | `--lift-ms` | 60 | pause between strokes |
 | `--wait` | 5 | countdown before drawing, seconds |
 | `--threshold` | Otsu | ink threshold 0–255 for opaque images |
 
-Test on a scratch canvas (a Paint app, or a public signature-pad demo) before the real
-document.
+Try it once on a scratch canvas (a Paint app, or a public signature-pad demo) before the
+real document.
