@@ -633,7 +633,7 @@ def main():
                     help="constant pen speed in points/s; turns off thickness-based speed")
     ap.add_argument("--speed-range", default="80,1000", metavar="SLOW,FAST",
                     help="points/s used for the thickest and thinnest ink (default 80,1000)")
-    ap.add_argument("--margin", type=float, default=0.08, help="padding inside the box, fraction (default 0.08)")
+    ap.add_argument("--margin", type=float, default=0.03, help="padding inside the box, fraction (default 0.03; keep it above half the pad's pen width)")
     ap.add_argument("--lift-ms", type=float, default=60, help="pause between strokes (default 60)")
     ap.add_argument("--wait", type=int, default=5, help="countdown before drawing, seconds (default 5)")
     ap.add_argument("--calibrate", action="store_true",

@@ -126,7 +126,7 @@ It prints `--box x1,y1,x2,y2`; pass that to skip steps 4–5 if you need to redo
 | `--speed-range` | 80,1000 | points/s for the thickest and thinnest ink: thick parts are drawn slowly, thin parts fast. Velocity-based pads (most e-sign sites: fast = thinner line) then reproduce the original's thick/thin strokes |
 | `--calibrate` | off | draw six lines at 60–2000 points/s instead of the signature, to see how a pad's line width responds to speed and pick a `--speed-range` |
 | `--speed` | off | constant speed in points/s instead (e.g. 300), for pads with a fixed line width |
-| `--margin` | 0.08 | padding inside the field, as a fraction; lower it (e.g. 0.02) for a bigger signature |
+| `--margin` | 0.03 | padding inside the field, as a fraction. Keeps the pen off the field's edge; 0.02 is fine on tall fields |
 | `--lift-ms` | 60 | pause between strokes |
 | `--wait` | 5 | countdown before drawing, seconds |
 | `--threshold` | Otsu | ink threshold 0–255 for opaque images |
